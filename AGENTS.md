@@ -28,6 +28,7 @@ The ESP firmware implements its own hysteresis controller, bypassing the AC's in
 ## Protocol Reference
 - https://github.com/adaasch/AC-hack — documents the UART protocol used by this AC
 - The `half_degree` bit exists in the set command struct but is not supported by this AC model (3-beep error + reset to whole degree)
+- `disp` bit: 1 = show target temp, 0 = show internal coarse temp (~23°C). Not a true "display off".
 
 ## Relevant Files
 - `components/tcl_climate/tcl_climate.cpp` — main UART protocol logic, temperature parsing at line 412

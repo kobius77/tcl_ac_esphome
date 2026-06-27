@@ -251,7 +251,7 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
   uint32_t regulation_interval_ms_{30000};
   std::string ext_temp_method_{"Primary"};
   bool user_has_set_target_{false};
-  bool display_on_{false};
+  bool display_on_{true};
   bool beep_on_{true};
   bool pending_display_refresh_{false};
 

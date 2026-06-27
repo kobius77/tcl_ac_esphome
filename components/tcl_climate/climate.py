@@ -59,7 +59,7 @@ CONFIG_SCHEMA = climate.climate_schema(TCLClimate).extend({
         state_class=STATE_CLASS_MEASUREMENT,
     ),
     cv.Optional(CONF_FALLBACK_TEMP, default=23.0): cv.temperature,
-    cv.Optional(CONF_DISPLAY, default=False): cv.boolean,
+    cv.Optional(CONF_DISPLAY, default=True): cv.boolean,
     cv.Optional(CONF_BEEP, default=True): cv.boolean,
     cv.Optional(CONF_REGULATION_INTERVAL, default="30s"): cv.positive_time_period_milliseconds,
     cv.Optional(CONF_EXT_TEMP_METHOD, default="Primary"): cv.string_strict,
