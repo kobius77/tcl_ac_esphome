@@ -157,7 +157,7 @@ void TCLClimate::build_set_cmd(get_cmd_resp_t *get_cmd_resp) {
       m_set_cmd.data.hswing_mv = 0;
     }
 
-    m_set_cmd.data.half_degree = 0;
+    m_set_cmd.data.half_degree = this->desired_half_degree_ ? 1 : 0;
 
     // Calculate XOR checksum
     uint8_t xor_byte = 0;
@@ -290,7 +290,10 @@ void TCLClimate::control(const climate::ClimateCall &call) {
 
         user_has_set_target_ = true;
         this->set_target_temperature(temp);
-        get_cmd_resp.data.temp = static_cast<uint8_t>(temp) - 16;
+        uint8_t field = static_cast<uint8_t>(floorf(temp)) - 16;
+        if (field > 14) field = 14;
+        get_cmd_resp.data.temp = field;
+        desired_half_degree_ = (temp - floorf(temp) >= 0.25f);
         should_build_cmd = true;
     }
 
@@ -375,7 +378,7 @@ climate::ClimateTraits TCLClimate::traits() {
   });
   traits.set_visual_min_temperature(16.0);
   traits.set_visual_max_temperature(31.0);
-  traits.set_visual_target_temperature_step(1.0);
+  traits.set_visual_target_temperature_step(0.5);
   return traits;
 }
 
@@ -591,13 +594,15 @@ void TCLClimate::loop() {
                                     if (sent_temp > 30.0f) sent_temp = 30.0f;
                                     last_sent_temp_ = sent_temp;
 
-                                    uint8_t desired_field = static_cast<uint8_t>(roundf(sent_temp)) - 16;
+                                    bool want_half = (sent_temp - floorf(sent_temp) >= 0.25f);
+                                    uint8_t desired_field = static_cast<uint8_t>(floorf(sent_temp)) - 16;
                                     if (desired_field > 14) desired_field = 14;
 
-                                    if ((m_get_cmd_resp.data.temp != desired_field || m_get_cmd_resp.data.power == 0) && can_send_regulation()) {
+                                    if ((m_get_cmd_resp.data.temp != desired_field || this->desired_half_degree_ != want_half || m_get_cmd_resp.data.power == 0) && can_send_regulation()) {
                                         m_get_cmd_resp.data.power = 0x01;
                                         m_get_cmd_resp.data.mode = 0x01;
                                         m_get_cmd_resp.data.temp = desired_field;
+                                        this->desired_half_degree_ = want_half;
                                         build_set_cmd(&m_get_cmd_resp);
                                         ready_to_send_set_cmd_flag = true;
                                         handle_display_refresh();
@@ -608,6 +613,7 @@ void TCLClimate::loop() {
                                         m_get_cmd_resp.data.power = 0x01;
                                         m_get_cmd_resp.data.mode = 0x01;
                                         m_get_cmd_resp.data.temp = 15;
+                                        this->desired_half_degree_ = false;
                                         build_set_cmd(&m_get_cmd_resp);
                                         ready_to_send_set_cmd_flag = true;
                                         handle_display_refresh();
@@ -622,13 +628,15 @@ void TCLClimate::loop() {
                                     if (sent_temp > 30.0f) sent_temp = 30.0f;
                                     last_sent_temp_ = sent_temp;
 
-                                    uint8_t desired_field = static_cast<uint8_t>(roundf(sent_temp)) - 16;
+                                    bool want_half = (sent_temp - floorf(sent_temp) >= 0.25f);
+                                    uint8_t desired_field = static_cast<uint8_t>(floorf(sent_temp)) - 16;
                                     if (desired_field > 14) desired_field = 14;
 
-                                    if ((m_get_cmd_resp.data.temp != desired_field || m_get_cmd_resp.data.power == 0) && can_send_regulation()) {
+                                    if ((m_get_cmd_resp.data.temp != desired_field || this->desired_half_degree_ != want_half || m_get_cmd_resp.data.power == 0) && can_send_regulation()) {
                                         m_get_cmd_resp.data.power = 0x01;
                                         m_get_cmd_resp.data.mode = 0x04;
                                         m_get_cmd_resp.data.temp = desired_field;
+                                        this->desired_half_degree_ = want_half;
                                         build_set_cmd(&m_get_cmd_resp);
                                         ready_to_send_set_cmd_flag = true;
                                         handle_display_refresh();
@@ -639,6 +647,7 @@ void TCLClimate::loop() {
                                         m_get_cmd_resp.data.power = 0x01;
                                         m_get_cmd_resp.data.mode = 0x04;
                                         m_get_cmd_resp.data.temp = 0;
+                                        this->desired_half_degree_ = false;
                                         build_set_cmd(&m_get_cmd_resp);
                                         ready_to_send_set_cmd_flag = true;
                                         handle_display_refresh();

@@ -254,6 +254,7 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
   bool display_on_{true};
   bool beep_on_{true};
   bool pending_display_refresh_{false};
+  bool desired_half_degree_{false};
 
   int read_data_line(int readch, uint8_t *buffer, int len);
   bool is_valid_xor(uint8_t *buffer, int len);
