@@ -23,7 +23,6 @@ The AC sees `gap = internal - sent = external - user_target`, so it modulates it
 - **Rate-limited sends** — regulation commands are sent at most every 30s to avoid spamming the UART
 - **Runtime toggles** — display and beeper can be switched on/off from HA without reflashing
 - **Fallback mode** — if the external sensor is unavailable, falls back to the AC's internal reading
-- **0.5°C target steps** — you can set targets like 23.5°C
 
 ### Exposed sensors
 

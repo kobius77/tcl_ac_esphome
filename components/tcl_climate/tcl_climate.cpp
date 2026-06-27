@@ -375,7 +375,7 @@ climate::ClimateTraits TCLClimate::traits() {
   });
   traits.set_visual_min_temperature(16.0);
   traits.set_visual_max_temperature(31.0);
-  traits.set_visual_target_temperature_step(0.5);
+  traits.set_visual_target_temperature_step(1.0);
   return traits;
 }
 
