@@ -9,6 +9,7 @@ AUTO_LOAD = ['climate']
 CONF_EXT_TEMP_SENSOR = 'ext_temp_sensor'
 CONF_INTERNAL_TEMP = 'internal_temp'
 CONF_POWER_SENSOR = 'power_sensor'
+CONF_DISPLAY = 'display'
 
 tcl_climate_ns = cg.esphome_ns.namespace('tcl_climate')
 TCLClimate = tcl_climate_ns.class_('TCLClimate', climate.Climate, uart.UARTDevice, cg.PollingComponent)
@@ -23,6 +24,7 @@ CONFIG_SCHEMA = climate.climate_schema(TCLClimate).extend({
         state_class=STATE_CLASS_MEASUREMENT,
     ),
     cv.Optional(CONF_POWER_SENSOR): cv.use_id(sensor.Sensor),
+    cv.Optional(CONF_DISPLAY, default=True): cv.boolean,
 }).extend(uart.UART_DEVICE_SCHEMA).extend(cv.polling_component_schema('450ms'))
 
 async def to_code(config):
@@ -39,3 +41,5 @@ async def to_code(config):
     if CONF_POWER_SENSOR in config:
         sens = await cg.get_variable(config[CONF_POWER_SENSOR])
         cg.add(var.set_power_sensor(sens))
+    if CONF_DISPLAY in config:
+        cg.add(var.set_display(config[CONF_DISPLAY]))

@@ -206,6 +206,7 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
   void set_ext_temp_sensor(sensor::Sensor *sensor) { ext_temp_sensor_ = sensor; }
   void set_int_temp_sensor(sensor::Sensor *sensor) { int_temp_sensor_ = sensor; }
   void set_power_sensor(sensor::Sensor *sensor) { power_sensor_ = sensor; }
+  void set_display(bool display_on) { display_on_ = display_on; }
   void set_vswing_pos(const std::string &vswing_pos);
   void set_hswing_pos(const std::string &hswing_pos);
   // Swing control methods
@@ -226,6 +227,7 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
   sensor::Sensor *int_temp_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   bool user_has_set_target_{false};
+  bool display_on_{true};
 
   int read_data_line(int readch, uint8_t *buffer, int len);
   bool is_valid_xor(uint8_t *buffer, int len);

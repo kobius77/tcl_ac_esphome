@@ -53,6 +53,7 @@ climate:
     internal_temp:
       name: "VeskaAC Internal Temperature"
     power_sensor: ac_power_watt
+    display: true
 
 select:
   - platform: template
