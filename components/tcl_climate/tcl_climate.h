@@ -4,6 +4,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/components/climate/climate.h"
+#include "esphome/components/sensor/sensor.h"
 
 namespace esphome {
 namespace tcl_climate {
@@ -202,8 +203,11 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
   void set_swing_mode(climate::ClimateSwingMode swing_mode);
   void set_target_temperature(float target_temperature);
 
-  void set_hswing_pos(const std::string &hswing_pos);
+  void set_ext_temp_sensor(sensor::Sensor *sensor) { ext_temp_sensor_ = sensor; }
+  void set_int_temp_sensor(sensor::Sensor *sensor) { int_temp_sensor_ = sensor; }
+  void set_power_sensor(sensor::Sensor *sensor) { power_sensor_ = sensor; }
   void set_vswing_pos(const std::string &vswing_pos);
+  void set_hswing_pos(const std::string &hswing_pos);
   // Swing control methods
   void control_vertical_swing(const std::string &swing_mode);
   void control_horizontal_swing(const std::string &swing_mode);
@@ -218,6 +222,11 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
   void loop() override;
 
  private:
+  sensor::Sensor *ext_temp_sensor_{nullptr};
+  sensor::Sensor *int_temp_sensor_{nullptr};
+  sensor::Sensor *power_sensor_{nullptr};
+  bool user_has_set_target_{false};
+
   int read_data_line(int readch, uint8_t *buffer, int len);
   bool is_valid_xor(uint8_t *buffer, int len);
   void print_hex_str(uint8_t *buffer, int len);

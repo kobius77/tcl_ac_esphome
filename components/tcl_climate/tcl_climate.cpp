@@ -252,6 +252,7 @@ void TCLClimate::control(const climate::ClimateCall &call) {
         float temp = *call.get_target_temperature();
         ESP_LOGI("TCL", "Received temperature control command: %.1f°C", temp);
 
+        user_has_set_target_ = true;
         get_cmd_resp.data.temp = static_cast<uint8_t>(temp) - 16;
         should_build_cmd = true;
     }
@@ -490,8 +491,79 @@ void TCLClimate::loop() {
                 else if (m_get_cmd_resp.data.hswing_fix == 0x05) set_hswing_pos("Fix right");
                 else set_hswing_pos("Last position");
 
-                this->set_target_temperature(static_cast<float>(m_get_cmd_resp.data.temp + 16));
-                this->set_current_temperature(curr_temp);
+                if (int_temp_sensor_ != nullptr) {
+                    int_temp_sensor_->publish_state(curr_temp);
+                }
+
+                if (ext_temp_sensor_ != nullptr && ext_temp_sensor_->has_state()) {
+                    float ext_temp = ext_temp_sensor_->get_state();
+                    this->set_current_temperature(ext_temp);
+
+                    if (!user_has_set_target_) {
+                        this->set_target_temperature(static_cast<float>(m_get_cmd_resp.data.temp + 16));
+                    }
+
+                    if (user_has_set_target_) {
+                        float target = this->target_temperature;
+
+                        if (this->mode == climate::CLIMATE_MODE_COOL) {
+                            if (ext_temp > target) {
+                                // sent_target = internal + target - external
+                                // AC sees gap = internal - sent = external - target
+                                float sent_temp = curr_temp + target - ext_temp;
+                                if (sent_temp < 16.0f) sent_temp = 16.0f;
+                                if (sent_temp > 30.0f) sent_temp = 30.0f;
+
+                                uint8_t desired_field = static_cast<uint8_t>(roundf(sent_temp)) - 16;
+                                if (desired_field > 14) desired_field = 14;
+
+                                if (m_get_cmd_resp.data.temp != desired_field || m_get_cmd_resp.data.power == 0) {
+                                    m_get_cmd_resp.data.power = 0x01;
+                                    m_get_cmd_resp.data.mode = 0x01;
+                                    m_get_cmd_resp.data.temp = desired_field;
+                                    build_set_cmd(&m_get_cmd_resp);
+                                    ready_to_send_set_cmd_flag = true;
+                                    ESP_LOGD("TCL", "Cool: ext=%.1f int=%.1f tgt=%.1f sent=%.0f", ext_temp, curr_temp, target, sent_temp);
+                                }
+                            } else if (m_get_cmd_resp.data.temp != 15) {
+                                m_get_cmd_resp.data.power = 0x01;
+                                m_get_cmd_resp.data.mode = 0x01;
+                                m_get_cmd_resp.data.temp = 15;
+                                build_set_cmd(&m_get_cmd_resp);
+                                ready_to_send_set_cmd_flag = true;
+                                ESP_LOGD("TCL", "Cool: ext=%.1f <= tgt=%.1f → stop", ext_temp, target);
+                            }
+                        } else if (this->mode == climate::CLIMATE_MODE_HEAT) {
+                            if (ext_temp < target) {
+                                float sent_temp = curr_temp + target - ext_temp;
+                                if (sent_temp < 16.0f) sent_temp = 16.0f;
+                                if (sent_temp > 30.0f) sent_temp = 30.0f;
+
+                                uint8_t desired_field = static_cast<uint8_t>(roundf(sent_temp)) - 16;
+                                if (desired_field > 14) desired_field = 14;
+
+                                if (m_get_cmd_resp.data.temp != desired_field || m_get_cmd_resp.data.power == 0) {
+                                    m_get_cmd_resp.data.power = 0x01;
+                                    m_get_cmd_resp.data.mode = 0x04;
+                                    m_get_cmd_resp.data.temp = desired_field;
+                                    build_set_cmd(&m_get_cmd_resp);
+                                    ready_to_send_set_cmd_flag = true;
+                                    ESP_LOGD("TCL", "Heat: ext=%.1f int=%.1f tgt=%.1f sent=%.0f", ext_temp, curr_temp, target, sent_temp);
+                                }
+                            } else if (m_get_cmd_resp.data.temp != 0) {
+                                m_get_cmd_resp.data.power = 0x01;
+                                m_get_cmd_resp.data.mode = 0x04;
+                                m_get_cmd_resp.data.temp = 0;
+                                build_set_cmd(&m_get_cmd_resp);
+                                ready_to_send_set_cmd_flag = true;
+                                ESP_LOGD("TCL", "Heat: ext=%.1f >= tgt=%.1f → stop", ext_temp, target);
+                            }
+                        }
+                    }
+                } else {
+                    this->set_current_temperature(curr_temp);
+                    this->set_target_temperature(static_cast<float>(m_get_cmd_resp.data.temp + 16));
+                }
 
                 if (this->is_changed) {
                     this->publish_state();
