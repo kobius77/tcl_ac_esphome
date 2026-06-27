@@ -1,4 +1,5 @@
 # ESPhome implementation of TCL OEM air conditioners
+###(slightly improved)
 
 ## Motivation
 
