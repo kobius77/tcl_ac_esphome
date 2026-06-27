@@ -1,16 +1,17 @@
-# Integration of TCL-based air conditioners for Home Assistant
+# ESPhome implementation of TCL OEM air conditioners
 
 ## Motivation
 
-The AC's internal "room temperature" sensor is very coarse — it only reports in steps of ~0.8°C. This was clearly designed for a dumb on/off deadband controller, not precise regulation. The result was that depending on where the indoor unit sits, the temperature would either overshoot or undershoot by several degrees, cycling the compressor on and off constantly. Very uncomfortable and energy-inefficient.
+The AC's internal "room temperature" sensor is very coarse — it only reports in steps of ~0.8°C. This was probably designed for a dumb on/off with fixed deadband controller, not precise regulation.  Besides, sitting inside the Box, usually mounted close to the ceiling, what this sensor mesuares probably is all but 'room temperature' for most situations.  And after all, the esp in the module combined with the HA climate integration doesn't do anything different than the IR-remote. BONUS: this makes the machine regulate it's rpm ('modulate') nicely.
 
-## Custom Thermostat (Veska VSK-12000BTU)
 
-Our [Veska AC](veskaac.yml) replaces the AC's internal thermostat with a custom hysteresis-free controller that uses an **external Home Assistant temperature sensor** for regulation:
+## Custom dynamic Thermostat (kind of)
+
+Implementing an external sensor had long been an idea, so with a little vibe we can now trick the AC's internal thermostat to act like a custom hysteresis-free controller that uses an **external Home Assistant temperature sensor** for regulation:
 
 ### How it works
 
-The ESP firmware implements **proportional target injection**: instead of telling the AC to target the user's set temperature, it computes a virtual target that makes the AC modulate proportionally to the real room temperature.
+This ESPhome firmware implements **proportional target injection**: instead of telling the AC to target the user's set temperature, it computes a virtual target that makes the AC modulate proportionally to the real room temperature.
 
 **Formula**: `sent_target = internal_temp + user_target - external_temp`
 
@@ -39,6 +40,8 @@ The AC sees `gap = internal - sent = external - user_target`, so it modulates it
 The AC now modulates smoothly, keeping the room temperature steady at the setpoint while running at the minimum necessary compressor RPM. No more temperature swings, no more on/off cycling.
 
 ---
+
+# From Original Project:
 
 ### Implemented:
 - Split system modes (auto, cool, dry, fan only, heat)
