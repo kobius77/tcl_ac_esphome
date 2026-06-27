@@ -3,12 +3,12 @@
 
 ## Motivation
 
-The AC's internal "room temperature" sensor is very coarse — it only reports in steps of ~0.8°C. This was probably designed for a dumb on/off with fixed deadband controller, not precise regulation.  Besides, sitting inside the Box, usually mounted close to the ceiling, what this sensor mesuares probably is all but 'room temperature' for most situations.  And after all, the esp in the module combined with the HA climate integration doesn't do anything different than the IR-remote. BONUS: this makes the machine regulate it's rpm ('modulate') nicely.
+The AC's internal "room temperature" sensor is very coarse — it only reports in steps of ~0.8°C. This was probably designed for a dumb on/off with fixed deadband controller, not precise regulation.  Besides, sitting inside the Box, usually mounted close to the ceiling, what this sensor mesuares probably is all but 'room temperature' for most situations.  And after all, the esp in the module combined with the HA climate integration doesn't do anything different than the IR-remote.
 
 
 ## Custom dynamic Thermostat (kind of)
 
-Implementing an external sensor had long been an idea, so with a little vibe we can now trick the AC's internal thermostat to act like a custom hysteresis-free controller that uses an **external Home Assistant temperature sensor** for regulation:
+Implementing an external sensor had long been an idea, so with a little vibe we can now trick the AC's internal thermostat to act like a custom hysteresis-free controller that uses an **external Home Assistant temperature sensor** for regulation. **BONUS:** this makes the machine regulate it's rpm ('modulate') nicely.
 
 ### How it works
 
