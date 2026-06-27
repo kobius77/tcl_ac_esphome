@@ -1,42 +1,101 @@
+# Example config for TCL AC with external sensor regulation.
+#
+# Copy this file, rename it, and fill in your secrets.
+#
+# For the custom thermostat (external sensor regulation) you need:
+#   1. One or two Home Assistant temperature sensors to use for regulation
+#   2. Optionally: a smart plug power sensor for observation
+#
+# Sensor configuration:
+#   - ext_temp_sensor / ext_temp_sensor_2: HA sensors used for regulation
+#     (define them under `sensor:` with platform: homeassistant)
+#   - ext_temp / ext_temp_2: output sensors that publish the external readings to HA
+#   - internal_temp: publishes the AC's own coarse internal reading (debugging)
+#   - sent_temp: publishes the computed target sent to the AC
+#   - power: publishes power draw from a smart plug sensor
+#
+# The external temp method can be changed at runtime via the
+# "External Temp Method" select entity (Primary / Primary with fallback / Average).
+
 esphome:
   name: tcl-ac
+  friendly_name: TCL AC
 
 esp8266:
   board: esp07
 
 external_components:
-  - source:
-      type: git
-      url: https://github.com/lNikazzzl/tcl_ac_esphome
-    components: [tcl_climate]
-#  or local
-#  - source: components
-
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-
-api:
-
-ota:
-  password: 123
-
-uart:
-  id: uart_bus
-  tx_pin: 1
-  rx_pin: 3
-  baud_rate: 9600
-  parity: EVEN
+  - source: components
+#  Or use the upstream repo instead
+#  - source:
+#      type: git
+#      url: https://github.com/kobius77/tcl_ac_esphome
+#    components: [tcl_climate]
 
 logger:
   level: VERBOSE
   baud_rate: 0
 
+api:
+  encryption:
+    key: !secret ac_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ac_ota_password
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO15
+  rx_pin: GPIO13
+  baud_rate: 9600
+  parity: EVEN
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+sensor:
+  # External temperature sensor #1 — replace entity_id with your HA sensor
+  - platform: homeassistant
+    id: ext_temp
+    entity_id: sensor.your_room_temperature
+  # External temperature sensor #2 (optional) — for fallback or average
+  - platform: homeassistant
+    id: ext_temp_2
+    entity_id: sensor.your_second_temperature
+  # Optional: power draw from a smart plug
+  - platform: homeassistant
+    id: ac_power_watt
+    entity_id: sensor.your_ac_power
+
 climate:
   - platform: tcl_climate
     id: tcl_custom_climate
     uart_id: uart_bus
-    name: "HAVC TCL"
+    name: "TCL AC"
+
+    # Required for external sensor regulation:
+    ext_temp_sensor: ext_temp
+    ext_temp_sensor_2: ext_temp_2         # optional, remove if unused
+
+    # Optional output sensors exposed to HA:
+    internal_temp:
+      name: "Temperature Int"              # AC's own coarse reading
+    power_sensor: ac_power_watt
+    ext_temp:
+      name: "Temperature Ext1"             # external sensor #1 value
+    ext_temp_2:
+      name: "Temperature Ext2"             # external sensor #2 value
+    power:
+      name: "AC Power"
+    sent_temp:
+      name: "Temperature Cmd"              # computed target sent to AC
+
+    fallback_temperature: 23               # used when sensor is unavailable
+    beep: true                             # beeper on AC remote commands
+    regulation_interval: 30s               # min interval between auto commands
+    display: true                          # show target temp on AC display
 
 select:
   - platform: template
@@ -77,3 +136,51 @@ select:
       then:
         lambda: |-
           id(tcl_custom_climate).control_horizontal_swing(x);
+
+  # Runtime selectable external temp method:
+  - platform: template
+    name: "External Temp Method"
+    id: ext_temp_method
+    entity_category: config
+    options:
+      - "Primary"
+      - "Primary with fallback"
+      - "Average"
+    set_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_ext_temp_method(x);
+    optimistic: true
+
+switch:
+  # Runtime display toggle (disp bit: 1=show target, 0=show internal temp)
+  - platform: template
+    name: "AC Display"
+    id: display_switch
+    restore_mode: DISABLED
+    lambda: |-
+      return id(tcl_custom_climate).is_display_on();
+    turn_on_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_display_runtime(true);
+    turn_off_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_display_runtime(false);
+
+  # Runtime beeper toggle
+  - platform: template
+    name: "AC Beeper"
+    id: beeper_switch
+    restore_mode: DISABLED
+    lambda: |-
+      return id(tcl_custom_climate).is_beep_on();
+    turn_on_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_beep_runtime(true);
+    turn_off_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_beep_runtime(false);

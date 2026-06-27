@@ -42,6 +42,36 @@ The AC now modulates smoothly, keeping the room temperature steady at the setpoi
 
 ---
 
+## Configuration
+
+See [`tcl-ac.yml`](tcl-ac.yml) for a full annotated example.
+
+### External sensors
+
+To use the custom thermostat, define your HA temperature sensors under `sensor:`:
+
+```yaml
+sensor:
+  - platform: homeassistant
+    id: ext_temp
+    entity_id: sensor.your_room_temperature
+  - platform: homeassistant
+    id: ext_temp_2                       # optional second sensor
+    entity_id: sensor.your_second_sensor
+```
+
+Then reference them in the climate block:
+
+```yaml
+climate:
+  - platform: tcl_climate
+    ext_temp_sensor: ext_temp
+    ext_temp_sensor_2: ext_temp_2        # optional
+```
+
+The method (Primary / Primary with fallback / Average) is selectable at runtime from the HA UI via the "External Temp Method" select entity.
+
+---
 # From Original Project:
 
 ### Implemented:
