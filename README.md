@@ -1,5 +1,46 @@
 # Integration of TCL-based air conditioners for Home Assistant
 
+## Motivation
+
+The AC's internal "room temperature" sensor is very coarse — it only reports in steps of ~0.8°C. This was clearly designed for a dumb on/off deadband controller, not precise regulation. The result was that depending on where the indoor unit sits, the temperature would either overshoot or undershoot by several degrees, cycling the compressor on and off constantly. Very uncomfortable and energy-inefficient.
+
+## Custom Thermostat (Veska VSK-12000BTU)
+
+Our [Veska AC](veskaac.yml) replaces the AC's internal thermostat with a custom hysteresis-free controller that uses an **external Home Assistant temperature sensor** for regulation:
+
+### How it works
+
+The ESP firmware implements **proportional target injection**: instead of telling the AC to target the user's set temperature, it computes a virtual target that makes the AC modulate proportionally to the real room temperature.
+
+**Formula**: `sent_target = internal_temp + user_target - external_temp`
+
+The AC sees `gap = internal - sent = external - user_target`, so it modulates its compressor RPM proportionally to how far the real room is from the target. No on/off cycling — the AC runs at the minimum necessary RPM to hold the setpoint.
+
+### Key features
+
+- **External sensor regulation** — uses one or two HA temperature sensors (configurable as primary, fallback, or average)
+- **Preserves user's target** — the temperature you set in the UI is never overwritten by the code
+- **Rate-limited sends** — regulation commands are sent at most every 30s to avoid spamming the UART
+- **Runtime toggles** — display and beeper can be switched on/off from HA without reflashing
+- **Fallback mode** — if the external sensor is unavailable, falls back to the AC's internal reading
+- **0.5°C target steps** — you can set targets like 23.5°C
+
+### Exposed sensors
+
+| Entity | Description |
+|--------|-------------|
+| Temperature Ext1 | External sensor #1 (primary) |
+| Temperature Ext2 | External sensor #2 (secondary) |
+| Temperature Int | AC's internal coarse reading (debugging) |
+| Temperature Cmd | Computed target sent to the AC |
+| VeskaAC Power | Power draw from smart plug |
+
+### Result
+
+The AC now modulates smoothly, keeping the room temperature steady at the setpoint while running at the minimum necessary compressor RPM. No more temperature swings, no more on/off cycling.
+
+---
+
 ### Implemented:
 - Split system modes (auto, cool, dry, fan only, heat)
 - Fan modes (mute, min, min-mid, mid, mid-high, high, turbo)

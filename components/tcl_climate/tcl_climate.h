@@ -204,9 +204,23 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
   void set_target_temperature(float target_temperature);
 
   void set_ext_temp_sensor(sensor::Sensor *sensor) { ext_temp_sensor_ = sensor; }
+  void set_ext_temp_sensor_2(sensor::Sensor *sensor) { ext_temp_sensor_2_ = sensor; }
   void set_int_temp_sensor(sensor::Sensor *sensor) { int_temp_sensor_ = sensor; }
   void set_power_sensor(sensor::Sensor *sensor) { power_sensor_ = sensor; }
+  void set_ext_temp_output(sensor::Sensor *sensor) { ext_temp_output_ = sensor; }
+  void set_ext_temp_2_output(sensor::Sensor *sensor) { ext_temp_2_output_ = sensor; }
+  void set_power_output(sensor::Sensor *sensor) { power_output_ = sensor; }
   void set_display(bool display_on) { display_on_ = display_on; }
+  void set_display_runtime(bool on);
+  bool is_display_on() const { return display_on_; }
+  void set_beep(bool beep_on) { beep_on_ = beep_on; }
+  void set_beep_runtime(bool on);
+  bool is_beep_on() const { return beep_on_; }
+  void set_regulation_interval(uint32_t interval_ms) { regulation_interval_ms_ = interval_ms; }
+  void set_fallback_temperature(float t) { fallback_temperature_ = t; }
+  void set_sent_temp_output(sensor::Sensor *sensor) { sent_temp_output_ = sensor; }
+  void set_ext_temp_method(const std::string &method) { ext_temp_method_ = method; }
+  const std::string &get_ext_temp_method() const { return ext_temp_method_; }
   void set_vswing_pos(const std::string &vswing_pos);
   void set_hswing_pos(const std::string &hswing_pos);
   // Swing control methods
@@ -224,14 +238,28 @@ class TCLClimate : public climate::Climate, public uart::UARTDevice, public Poll
 
  private:
   sensor::Sensor *ext_temp_sensor_{nullptr};
+  sensor::Sensor *ext_temp_sensor_2_{nullptr};
   sensor::Sensor *int_temp_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
+  sensor::Sensor *ext_temp_output_{nullptr};
+  sensor::Sensor *ext_temp_2_output_{nullptr};
+  sensor::Sensor *power_output_{nullptr};
+  sensor::Sensor *sent_temp_output_{nullptr};
+  float last_sent_temp_{0};
+  float fallback_temperature_{23.0f};
+  uint32_t last_regulation_send_ms_{0};
+  uint32_t regulation_interval_ms_{30000};
+  std::string ext_temp_method_{"Primary"};
   bool user_has_set_target_{false};
-  bool display_on_{true};
+  bool display_on_{false};
+  bool beep_on_{true};
+  bool pending_display_refresh_{false};
 
   int read_data_line(int readch, uint8_t *buffer, int len);
   bool is_valid_xor(uint8_t *buffer, int len);
   void print_hex_str(uint8_t *buffer, int len);
+  bool can_send_regulation();
+  void handle_display_refresh();
 };
 
 }  // namespace tcl_climate
