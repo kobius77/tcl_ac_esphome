@@ -39,11 +39,6 @@ sensor:
     id: ac_power_watt
     entity_id: sensor.veskaac_power
 
-light:
-  - platform: status_led
-    name: "Switch state"
-    pin: GPIO5
-
 climate:
   - platform: tcl_climate
     id: tcl_custom_climate
@@ -51,9 +46,17 @@ climate:
     name: "VeskaAC"
     ext_temp_sensor: ext_temp
     internal_temp:
-      name: "VeskaAC Internal Temperature"
+      name: "Temperature Int"
     power_sensor: ac_power_watt
-    display: true
+    ext_temp:
+      name: "Temperature Ext1"
+    power:
+      name: "AC Power"
+    sent_temp:
+      name: "Temperature Cmd"
+    beep: false
+    display: false
+    ramp_mode: false
 
 select:
   - platform: template
@@ -94,3 +97,34 @@ select:
       then:
         lambda: |-
           id(tcl_custom_climate).control_horizontal_swing(x);
+
+switch:
+  - platform: template
+    name: "AC Beeper"
+    id: beeper_switch
+    restore_mode: DISABLED
+    lambda: |-
+      return id(tcl_custom_climate).is_beep_on();
+    turn_on_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_beep_runtime(true);
+    turn_off_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_beep_runtime(false);
+
+  - platform: template
+    name: "AC Display"
+    id: display_switch
+    restore_mode: DISABLED
+    lambda: |-
+      return id(tcl_custom_climate).is_display_on();
+    turn_on_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_display_runtime(true);
+    turn_off_action:
+      then:
+        lambda: |-
+          id(tcl_custom_climate).set_display_runtime(false);

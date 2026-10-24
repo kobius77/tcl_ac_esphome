@@ -3,7 +3,8 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include "tcl_climate.h"
-#include <map>  // Add this include
+#include <cmath>
+#include <map>
 
 namespace esphome {
 namespace tcl_climate {
@@ -99,7 +100,7 @@ void TCLClimate::build_set_cmd(get_cmd_resp_t *get_cmd_resp) {
     m_set_cmd.data.power = get_cmd_resp->data.power;
     m_set_cmd.data.off_timer_en = 0;
     m_set_cmd.data.on_timer_en = 0;
-    m_set_cmd.data.beep = 1;
+    m_set_cmd.data.beep = this->beep_on_ ? 1 : 0;
     m_set_cmd.data.disp = this->display_on_ ? 1 : 0;
     m_set_cmd.data.eco = 0;
     m_set_cmd.data.turbo = get_cmd_resp->data.turbo;
@@ -170,6 +171,37 @@ void TCLClimate::build_set_cmd(get_cmd_resp_t *get_cmd_resp) {
 void TCLClimate::setup() {
   set_update_interval(UPDATE_INTERVAL_MS);
   this->set_supported_custom_fan_modes({"Turbo", "Mute", "Automatic", "1", "2", "3", "4", "5"});
+  auto restored = this->restore_state_();
+  if (restored.has_value()) {
+    restored->apply(this);
+    user_has_set_target_ = true;
+  }
+  // Guard against idle temperatures (30°C/17°C) saved to RTC during boot race
+  if (this->target_temperature >= 30.0f) {
+    this->target_temperature = 24.0f;
+  } else if (this->target_temperature <= 17.0f && this->target_temperature > 0.0f) {
+    this->target_temperature = 20.0f;
+  }
+}
+
+void TCLClimate::set_beep_runtime(bool on) {
+    beep_on_ = on;
+    if (m_get_cmd_resp.data.header == 0xBB) {
+        get_cmd_resp_t resp = {0};
+        memcpy(resp.raw, m_get_cmd_resp.raw, sizeof(resp.raw));
+        build_set_cmd(&resp);
+        ready_to_send_set_cmd_flag = true;
+    }
+}
+
+void TCLClimate::set_display_runtime(bool on) {
+    display_on_ = on;
+    if (m_get_cmd_resp.data.header == 0xBB) {
+        get_cmd_resp_t resp = {0};
+        memcpy(resp.raw, m_get_cmd_resp.raw, sizeof(resp.raw));
+        build_set_cmd(&resp);
+        ready_to_send_set_cmd_flag = true;
+    }
 }
 
 // Swing control methods from old code
@@ -233,18 +265,27 @@ void TCLClimate::control(const climate::ClimateCall &call) {
 
         if (climate_mode == climate::CLIMATE_MODE_OFF) {
             get_cmd_resp.data.power = 0x00;
-        } else {
-            get_cmd_resp.data.power = 0x01;
-            switch (climate_mode) {
-                case climate::CLIMATE_MODE_COOL:    get_cmd_resp.data.mode = 0x01; break;
-                case climate::CLIMATE_MODE_DRY:     get_cmd_resp.data.mode = 0x03; break;
-                case climate::CLIMATE_MODE_FAN_ONLY:get_cmd_resp.data.mode = 0x02; break;
-                case climate::CLIMATE_MODE_HEAT:
-                case climate::CLIMATE_MODE_HEAT_COOL:get_cmd_resp.data.mode = 0x04; break;
-                case climate::CLIMATE_MODE_AUTO:    get_cmd_resp.data.mode = 0x05; break;
-                default: break;
+            user_has_set_target_ = false;
+            } else {
+                get_cmd_resp.data.power = 0x01;
+                switch (climate_mode) {
+                    case climate::CLIMATE_MODE_COOL:    get_cmd_resp.data.mode = 0x01; break;
+                    case climate::CLIMATE_MODE_DRY:     get_cmd_resp.data.mode = 0x03; break;
+                    case climate::CLIMATE_MODE_FAN_ONLY:get_cmd_resp.data.mode = 0x02; break;
+                    case climate::CLIMATE_MODE_HEAT:
+                    case climate::CLIMATE_MODE_HEAT_COOL:get_cmd_resp.data.mode = 0x04; break;
+                    case climate::CLIMATE_MODE_AUTO:    get_cmd_resp.data.mode = 0x05; break;
+                    default: break;
+                }
+                // Re-enable regulation when turning back on
+                user_has_set_target_ = true;
+                if (this->target_temperature >= 16.0f && this->target_temperature <= 31.0f) {
+                    get_cmd_resp.data.temp = static_cast<uint8_t>(this->target_temperature) - 16;
+                } else {
+                    this->set_target_temperature(24.0f);
+                    get_cmd_resp.data.temp = 8; // 24°C
+                }
             }
-        }
         should_build_cmd = true;
     }
 
@@ -253,7 +294,27 @@ void TCLClimate::control(const climate::ClimateCall &call) {
         ESP_LOGI("TCL", "Received temperature control command: %.1f°C", temp);
 
         user_has_set_target_ = true;
+        this->set_target_temperature(temp);
         get_cmd_resp.data.temp = static_cast<uint8_t>(temp) - 16;
+
+        // If the AC is off and no mode was given, turn it on and pick the
+        // operating direction from the sign of the error:
+        // room colder than target -> HEAT, room warmer or equal -> COOL.
+        if (!call.get_mode().has_value() &&
+            m_get_cmd_resp.data.header == 0xBB && m_get_cmd_resp.data.power == 0x00) {
+            float ref = isnan(this->current_temperature) ? temp : this->current_temperature;
+            if (temp > ref) {
+                get_cmd_resp.data.power = 0x01;
+                get_cmd_resp.data.mode = 0x04;
+                this->set_mode(climate::CLIMATE_MODE_HEAT);
+                ESP_LOGI("TCL", "AC is off — turning on in HEAT mode (target %.1f > current %.1f)", temp, ref);
+            } else {
+                get_cmd_resp.data.power = 0x01;
+                get_cmd_resp.data.mode = 0x01;
+                this->set_mode(climate::CLIMATE_MODE_COOL);
+                ESP_LOGI("TCL", "AC is off — turning on in COOL mode (target %.1f <= current %.1f)", temp, ref);
+            }
+        }
         should_build_cmd = true;
     }
 
@@ -316,6 +377,7 @@ void TCLClimate::control(const climate::ClimateCall &call) {
 
         build_set_cmd(&get_cmd_resp);
         ready_to_send_set_cmd_flag = true;
+        this->publish_state();
     }
 }
 
@@ -409,14 +471,33 @@ void TCLClimate::loop() {
             if (is_valid_xor(buffer, len)) {
                 print_hex_str(buffer, len);
 
-                // Calculate current temperature
-                float curr_temp = ((static_cast<uint16_t>(buffer[17] << 8) | buffer[18]) / 374.0f - 32.0f) / 1.8f;
-                this->is_changed = false;
-
-                // Set mode
-                if (m_get_cmd_resp.data.power == 0x00) {
-                    this->set_mode(climate::CLIMATE_MODE_OFF);
+                // Calculate current temperature with exponential smoothing
+                float raw_temp = ((static_cast<uint16_t>(buffer[17] << 8) | buffer[18]) / 374.0f - 32.0f) / 1.8f;
+                if (isnan(curr_temp_)) {
+                    curr_temp_ = raw_temp;
                 } else {
+                    curr_temp_ = curr_temp_ * 0.85f + raw_temp * 0.15f;
+                }
+                this->is_changed = false;
+                last_sent_temp_ = static_cast<float>(m_get_cmd_resp.data.temp + 16);
+
+                // Set mode from AC response
+                if (m_get_cmd_resp.data.power == 0x00 &&
+                    (m_get_cmd_resp.data.temp == 14 || m_get_cmd_resp.data.temp == 1)) {
+                    // AC is in our idle state (power=0, field=14/1) — set mode from AC mode
+                    static const std::map<uint8_t, climate::ClimateMode> IDLE_MODE_MAP = {
+                        {0x01, climate::CLIMATE_MODE_COOL},
+                        {0x04, climate::CLIMATE_MODE_HEAT},
+                    };
+                    auto it = IDLE_MODE_MAP.find(m_get_cmd_resp.data.mode);
+                    if (it != IDLE_MODE_MAP.end()) {
+                        this->set_mode(it->second);
+                    }
+                } else if (m_get_cmd_resp.data.power == 0x00 && !user_has_set_target_) {
+                    // AC reports power off with a non-idle field and user hasn't set target — truly off
+                    this->set_mode(climate::CLIMATE_MODE_OFF);
+                } else if (user_has_set_target_) {
+                    // AC is on and user has an active target — sync mode from AC
                     static const std::map<uint8_t, climate::ClimateMode> MODE_MAP = {
                         {0x01, climate::CLIMATE_MODE_COOL},
                         {0x03, climate::CLIMATE_MODE_DRY},
@@ -429,6 +510,8 @@ void TCLClimate::loop() {
                         this->set_mode(it->second);
                     }
                 }
+                // else: user_has_set_target_=false and power=1 — user turned OFF but AC hasn't shut down yet.
+                // Don't touch mode; leave it as OFF.
 
                 // Set fan mode
                 static const std::map<uint8_t, std::string> FAN_MODE_MAP = {
@@ -491,78 +574,196 @@ void TCLClimate::loop() {
                 else if (m_get_cmd_resp.data.hswing_fix == 0x05) set_hswing_pos("Fix right");
                 else set_hswing_pos("Last position");
 
+                // Keep display off if user disabled it — AC sometimes re-enables it
+                if (!display_on_ && m_get_cmd_resp.data.disp) {
+                    get_cmd_resp_t resp = {0};
+                    memcpy(resp.raw, m_get_cmd_resp.raw, sizeof(resp.raw));
+                    build_set_cmd(&resp);
+                    ready_to_send_set_cmd_flag = true;
+                }
+
                 if (int_temp_sensor_ != nullptr) {
-                    int_temp_sensor_->publish_state(curr_temp);
+                    int_temp_sensor_->publish_state(curr_temp_);
                 }
 
                 if (ext_temp_sensor_ != nullptr && ext_temp_sensor_->has_state()) {
                     float ext_temp = ext_temp_sensor_->get_state();
                     this->set_current_temperature(ext_temp);
 
-                    if (!user_has_set_target_) {
-                        this->set_target_temperature(static_cast<float>(m_get_cmd_resp.data.temp + 16));
+                    if (ext_temp_output_ != nullptr) {
+                        ext_temp_output_->publish_state(ext_temp);
                     }
 
-                    if (user_has_set_target_) {
-                        float target = this->target_temperature;
+                    if (ramp_mode_) {
+                        uint32_t now = millis();
+                        uint32_t step_duration = 8UL * 60 * 1000;
+                        uint8_t step = (now - ramp_step_start_ms_) / step_duration;
 
-                        if (this->mode == climate::CLIMATE_MODE_COOL) {
-                            if (ext_temp > target) {
-                                // sent_target = internal + target - external
-                                // AC sees gap = internal - sent = external - target
-                                float sent_temp = curr_temp + target - ext_temp;
-                                if (sent_temp < 16.0f) sent_temp = 16.0f;
-                                if (sent_temp > 30.0f) sent_temp = 30.0f;
+                        if (step >= 13) {
+                            // Ramp complete — go to cool idle and stop
+                            m_get_cmd_resp.data.power = 0x00;
+                            m_get_cmd_resp.data.mode = 0x01;
+                            m_get_cmd_resp.data.temp = 14;
+                            build_set_cmd(&m_get_cmd_resp);
+                            ready_to_send_set_cmd_flag = true;
+                            ramp_mode_ = false;
+                            user_has_set_target_ = false;
+                            ESP_LOGI("TCL", "Ramp complete, AC set to idle");
+                            // Still log one final row
+                            float power = 0;
+                            if (power_sensor_ != nullptr && power_sensor_->has_state()) power = power_sensor_->get_state();
+                            char hex_buf[128] = {0};
+                            char *p = hex_buf;
+                            for (int i = 0; i < (int)sizeof(m_get_cmd_resp.raw) && (p - hex_buf) < (int)sizeof(hex_buf) - 3; i++)
+                                p += snprintf(p, sizeof(hex_buf) - (p - hex_buf), "%02X", m_get_cmd_resp.raw[i]);
+                            ESP_LOGI("TCL", "RAMP,%lu,%u,%.1f,%.1f,%.1f,%.0f,%u,%s",
+                                now / 1000, ramp_step_, ramp_target_, ext_temp, curr_temp_, power, 14, hex_buf);
+                        } else {
+                            if (step > 12) step = 12;
+                            ramp_step_ = step;
+                            ramp_target_ = 28.0f - (float)step;
 
-                                uint8_t desired_field = static_cast<uint8_t>(roundf(sent_temp)) - 16;
-                                if (desired_field > 14) desired_field = 14;
+                        user_has_set_target_ = true;
+                        this->target_temperature = ramp_target_;
 
-                                if (m_get_cmd_resp.data.temp != desired_field || m_get_cmd_resp.data.power == 0) {
-                                    m_get_cmd_resp.data.power = 0x01;
-                                    m_get_cmd_resp.data.mode = 0x01;
-                                    m_get_cmd_resp.data.temp = desired_field;
-                                    build_set_cmd(&m_get_cmd_resp);
-                                    ready_to_send_set_cmd_flag = true;
-                                    ESP_LOGD("TCL", "Cool: ext=%.1f int=%.1f tgt=%.1f sent=%.0f", ext_temp, curr_temp, target, sent_temp);
-                                }
-                            } else if (m_get_cmd_resp.data.temp != 15) {
-                                m_get_cmd_resp.data.power = 0x01;
-                                m_get_cmd_resp.data.mode = 0x01;
-                                m_get_cmd_resp.data.temp = 15;
-                                build_set_cmd(&m_get_cmd_resp);
-                                ready_to_send_set_cmd_flag = true;
-                                ESP_LOGD("TCL", "Cool: ext=%.1f <= tgt=%.1f → stop", ext_temp, target);
+                        uint8_t field = static_cast<uint8_t>(ramp_target_) - 16;
+                        if (field > 14) field = 14;
+
+                        float power = 0;
+                        if (power_sensor_ != nullptr && power_sensor_->has_state()) {
+                            power = power_sensor_->get_state();
+                        }
+
+                        if (now - ramp_last_log_ms_ >= 5000) {
+                            ramp_last_log_ms_ = now;
+                            char hex_buf[128] = {0};
+                            char *p = hex_buf;
+                            for (int i = 0; i < (int)sizeof(m_get_cmd_resp.raw) && (p - hex_buf) < (int)sizeof(hex_buf) - 3; i++) {
+                                p += snprintf(p, sizeof(hex_buf) - (p - hex_buf), "%02X", m_get_cmd_resp.raw[i]);
                             }
-                        } else if (this->mode == climate::CLIMATE_MODE_HEAT) {
-                            if (ext_temp < target) {
-                                float sent_temp = curr_temp + target - ext_temp;
-                                if (sent_temp < 16.0f) sent_temp = 16.0f;
-                                if (sent_temp > 30.0f) sent_temp = 30.0f;
+                            ESP_LOGI("TCL", "RAMP,%lu,%u,%.1f,%.1f,%.1f,%.0f,%u,%s",
+                                now / 1000, ramp_step_, ramp_target_, ext_temp, curr_temp_, power, field, hex_buf);
+                        }
 
-                                uint8_t desired_field = static_cast<uint8_t>(roundf(sent_temp)) - 16;
-                                if (desired_field > 14) desired_field = 14;
+                        if (user_has_set_target_ && (m_get_cmd_resp.data.temp != field || m_get_cmd_resp.data.power == 0)) {
+                            m_get_cmd_resp.data.power = 0x01;
+                            m_get_cmd_resp.data.mode = 0x01;
+                            m_get_cmd_resp.data.temp = field;
+                            build_set_cmd(&m_get_cmd_resp);
+                            ready_to_send_set_cmd_flag = true;
+                        }
 
-                                if (m_get_cmd_resp.data.temp != desired_field || m_get_cmd_resp.data.power == 0) {
-                                    m_get_cmd_resp.data.power = 0x01;
-                                    m_get_cmd_resp.data.mode = 0x04;
-                                    m_get_cmd_resp.data.temp = desired_field;
-                                    build_set_cmd(&m_get_cmd_resp);
-                                    ready_to_send_set_cmd_flag = true;
-                                    ESP_LOGD("TCL", "Heat: ext=%.1f int=%.1f tgt=%.1f sent=%.0f", ext_temp, curr_temp, target, sent_temp);
-                                }
-                            } else if (m_get_cmd_resp.data.temp != 0) {
+                        last_sent_temp_ = ramp_target_;
+                        }   // closes else of step>=13
+                    } else {
+                        // No auto-fallback here; user must explicitly set target via HA
+                        // RTC restore in setup() handles boot persistence
+
+                        if (user_has_set_target_) {
+                            float target = this->target_temperature;
+                            float error = ext_temp - target;
+
+                            // Decide the regulation direction:
+                            //  - explicit COOL/HEAT mode set by the user wins
+                            //  - otherwise (AUTO, OFF with an active target, or a
+                            //    stale AC mode like summer's cool idle) pick
+                            //    HEAT vs COOL from the sign of the error
+                            uint8_t desired_mode;
+                            if (this->mode == climate::CLIMATE_MODE_COOL) {
+                                desired_mode = 0x01;
+                            } else if (this->mode == climate::CLIMATE_MODE_HEAT) {
+                                desired_mode = 0x04;
+                            } else {
+                                desired_mode = (error < 0 ? 0x04 : 0x01);
+                            }
+
+                            // Modulating control: scale the setpoint offset with
+                            // the remaining error so the compressor backs off as
+                            // the room approaches the target.
+                            // e_hold > 0 -> still below target (heat) / above
+                            // target (cool); e_hold < 0 -> overshoot.
+                            float e_hold = (desired_mode == 0x04) ? -error : error;
+                            float signed_gap;
+                            if (e_hold >= 1.0f) {
+                                // Far from target: full aggression (same P-gain as before)
+                                signed_gap = e_hold * 5.0f + 0.5f;
+                            } else if (e_hold > 0.0f) {
+                                // Taper zone (<1° to target): shrink the offset so the
+                                // AC modulates down instead of holding a fixed demand
+                                signed_gap = (e_hold * 5.0f + 0.5f) * e_hold;
+                            } else {
+                                // Overshoot: push the setpoint below the indoor reading
+                                // so the compressor drops to minimum / shuts off
+                                signed_gap = e_hold * 5.0f - 0.5f;
+                            }
+                            if (signed_gap < -4.0f) signed_gap = -4.0f;
+                            if (signed_gap > 8.0f) signed_gap = 8.0f;
+                            // NOTE for heat: buffer[17]/[18] is the COIL temperature
+                            // (hot), not room temp. Anchoring the setpoint to the
+                            // room sensor (ext_temp) lets the AC's own thermostat
+                            // see a setpoint near/around room temp, so it modulates
+                            // and idles naturally. Cooling keeps the proven logic.
+                            float sent_temp;
+                            if (desired_mode == 0x04) {
+                                sent_temp = ext_temp + signed_gap;
+                            } else {
+                                sent_temp = curr_temp_ - signed_gap;
+                            }
+                            if (isnan(sent_temp)) sent_temp = 24.0f;
+                            if (sent_temp < 16.0f) sent_temp = 16.0f;
+                            if (sent_temp > 30.0f) sent_temp = 30.0f;
+                            last_sent_temp_ = sent_temp;
+
+                            uint8_t desired_field = static_cast<uint8_t>(floorf(sent_temp + 0.499f)) - 16;
+                            if (desired_field > 14) desired_field = 14;
+
+                            if (m_get_cmd_resp.data.power == 0x00 ||
+                                m_get_cmd_resp.data.mode != desired_mode ||
+                                m_get_cmd_resp.data.temp != desired_field) {
                                 m_get_cmd_resp.data.power = 0x01;
-                                m_get_cmd_resp.data.mode = 0x04;
-                                m_get_cmd_resp.data.temp = 0;
+                                m_get_cmd_resp.data.mode = desired_mode;
+                                m_get_cmd_resp.data.temp = desired_field;
                                 build_set_cmd(&m_get_cmd_resp);
                                 ready_to_send_set_cmd_flag = true;
-                                ESP_LOGD("TCL", "Heat: ext=%.1f >= tgt=%.1f → stop", ext_temp, target);
+                                ESP_LOGD("TCL", "%s: ext=%.1f tgt=%.1f int=%.1f gap=%.1f sent=%.0f",
+                                         desired_mode == 0x04 ? "Heat" : "Cool",
+                                         ext_temp, target, curr_temp_, signed_gap, sent_temp);
                             }
                         }
                     }
                 } else {
-                    this->set_current_temperature(curr_temp);
-                    this->set_target_temperature(static_cast<float>(m_get_cmd_resp.data.temp + 16));
+                    this->set_current_temperature(curr_temp_);
+                }
+
+                if (sent_temp_output_ != nullptr) {
+                    sent_temp_output_->publish_state(last_sent_temp_);
+                }
+
+                // One-line periodic status: everything correlated in one row.
+                static uint32_t last_stat_ms = 0;
+                if (millis() - last_stat_ms >= 10000) {
+                    last_stat_ms = millis();
+                    const char* mode_name = "?";
+                    switch (this->mode) {
+                        case climate::CLIMATE_MODE_OFF: mode_name = "OFF"; break;
+                        case climate::CLIMATE_MODE_COOL: mode_name = "COOL"; break;
+                        case climate::CLIMATE_MODE_HEAT: mode_name = "HEAT"; break;
+                        case climate::CLIMATE_MODE_AUTO: mode_name = "AUTO"; break;
+                        case climate::CLIMATE_MODE_FAN_ONLY: mode_name = "FAN"; break;
+                        case climate::CLIMATE_MODE_DRY: mode_name = "DRY"; break;
+                        default: mode_name = "?"; break;
+                    }
+                    ESP_LOGI("TCL", "STAT,fw3,ext=%.1f,tgt=%.1f,u_mode=%s,ac_pwr=%u,ac_mode=%u,ac_set=%u,cmd=%.1f,powerW=%.0f",
+                             static_cast<double>(this->current_temperature), this->target_temperature, mode_name,
+                             m_get_cmd_resp.data.power, m_get_cmd_resp.data.mode, m_get_cmd_resp.data.temp + 16,
+                             static_cast<double>(last_sent_temp_),
+                             static_cast<double>(power_sensor_ && power_sensor_->has_state() ? power_sensor_->get_state() : NAN));
+                }
+
+                if (power_sensor_ != nullptr && power_sensor_->has_state()) {
+                    if (power_output_ != nullptr) {
+                        power_output_->publish_state(power_sensor_->get_state());
+                    }
                 }
 
                 if (this->is_changed) {
@@ -570,6 +771,16 @@ void TCLClimate::loop() {
                 }
             }
         }
+    }
+}
+
+void TCLClimate::set_ramp_mode(bool ramp_on) {
+    ramp_mode_ = ramp_on;
+    if (ramp_on) {
+        ramp_step_start_ms_ = millis();
+        ramp_last_log_ms_ = millis();
+        ramp_step_ = 0;
+        ramp_target_ = 28.0f;
     }
 }
 
