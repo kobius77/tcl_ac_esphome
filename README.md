@@ -1,4 +1,78 @@
-# Integration of TCL-based air conditioners for Home Assistant
+# ESPhome implementation of TCL OEM air conditioners
+### (slightly improved)
+
+## Motivation
+
+The AC's internal "room temperature" sensor is very coarse — it only reports in steps of ~0.8°C. This was probably designed for a dumb on/off with fixed deadband controller, not precise regulation.  Besides, sitting inside the Box, usually mounted close to the ceiling, what this sensor mesuares probably is all but 'room temperature' for most situations.  And after all, the esp in the module combined with the HA climate integration doesn't do anything different than the IR-remote.
+
+
+## Custom dynamic Thermostat (kind of)
+
+Implementing an external sensor had long been an idea, so with a little vibe we can now trick the AC's internal thermostat to act like a custom hysteresis-free controller that uses an **external Home Assistant temperature sensor** for regulation. **BONUS:** this makes the machine regulate it's rpm ('modulate') nicely.
+
+### How it works
+
+This ESPhome firmware implements **proportional target injection**: instead of telling the AC to target the user's set temperature, it computes a virtual target that makes the AC modulate proportionally to the real room temperature.
+
+**Formula**: `sent_target = internal_temp + user_target - external_temp`
+
+The AC sees `gap = internal - sent = external - user_target`, so it modulates its compressor RPM proportionally to how far the real room is from the target. No on/off cycling — the AC runs at the minimum necessary RPM to hold the setpoint.
+
+### Key features
+
+- **External sensor regulation** — uses one or two HA temperature sensors (configurable as primary, fallback, or average)
+- **Preserves user's target** — the temperature you set in the UI is never overwritten by the code
+- **Rate-limited sends** — regulation commands are sent at most every 30s to avoid spamming the UART
+- **Runtime toggles** — display and beeper can be switched on/off from HA without reflashing
+- **Fallback mode** — if the external sensor is unavailable, falls back to the AC's internal reading
+
+### Exposed sensors
+
+| Entity | Description |
+|--------|-------------|
+| Temperature Ext1 | External sensor #1 (primary) |
+| Temperature Ext2 | External sensor #2 (secondary) |
+| Temperature Int | AC's internal coarse reading (debugging) |
+| Temperature Cmd | Computed target sent to the AC |
+| VeskaAC Power | Power draw from smart plug |
+
+### Result
+
+The AC now modulates smoothly, keeping the room temperature steady at the setpoint while running at the minimum necessary compressor RPM. No more temperature swings, no more on/off cycling.
+
+---
+
+## Configuration
+
+See [`tcl-ac.yml`](tcl-ac.yml) for a full annotated example.
+
+### External sensors
+
+To use the custom thermostat, define your HA temperature sensors under `sensor:`:
+
+```yaml
+sensor:
+  - platform: homeassistant
+    id: ext_temp
+    entity_id: sensor.your_room_temperature
+  - platform: homeassistant
+    id: ext_temp_2                       # optional second sensor
+    entity_id: sensor.your_second_sensor
+```
+
+Then reference them in the climate block:
+
+```yaml
+climate:
+  - platform: tcl_climate
+    ext_temp_sensor: ext_temp
+    ext_temp_sensor_2: ext_temp_2        # optional
+```
+
+The method (Primary / Primary with fallback / Average) is selectable at runtime from the HA UI via the "External Temp Method" select entity.
+
+---
+# From Original Project:
 
 ### Implemented:
 - Split system modes (auto, cool, dry, fan only, heat)
