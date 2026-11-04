@@ -766,6 +766,39 @@ void TCLClimate::loop() {
                     }
                 }
 
+                // Report climate action (HA's hvac_action). This component never
+                // set it before, so HA always showed "off" even while heating or
+                // cooling. Derive it from the AC's power bit plus mode and the
+                // room-vs-target gap.
+                climate::ClimateAction new_action = climate::CLIMATE_ACTION_OFF;
+                if (m_get_cmd_resp.data.power != 0x00 && this->mode != climate::CLIMATE_MODE_OFF) {
+                    if (this->mode == climate::CLIMATE_MODE_HEAT) {
+                        new_action = (this->current_temperature < this->target_temperature)
+                                         ? climate::CLIMATE_ACTION_HEATING
+                                         : climate::CLIMATE_ACTION_IDLE;
+                    } else if (this->mode == climate::CLIMATE_MODE_COOL) {
+                        new_action = (this->current_temperature > this->target_temperature)
+                                         ? climate::CLIMATE_ACTION_COOLING
+                                         : climate::CLIMATE_ACTION_IDLE;
+                    } else if (this->mode == climate::CLIMATE_MODE_DRY) {
+                        new_action = climate::CLIMATE_ACTION_DRYING;
+                    } else if (this->mode == climate::CLIMATE_MODE_FAN_ONLY) {
+                        new_action = climate::CLIMATE_ACTION_FAN;
+                    } else if (this->mode == climate::CLIMATE_MODE_AUTO) {
+                        new_action = (this->current_temperature < this->target_temperature)
+                                         ? climate::CLIMATE_ACTION_HEATING
+                                         : (this->current_temperature > this->target_temperature)
+                                               ? climate::CLIMATE_ACTION_COOLING
+                                               : climate::CLIMATE_ACTION_IDLE;
+                    } else {
+                        new_action = climate::CLIMATE_ACTION_IDLE;
+                    }
+                }
+                if (new_action != this->action) {
+                    this->action = new_action;
+                    this->is_changed = true;
+                }
+
                 if (this->is_changed) {
                     this->publish_state();
                 }
